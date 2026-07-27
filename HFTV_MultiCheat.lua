@@ -110,7 +110,7 @@ local LANG_LABEL = { ru = "Русский", en = "English", es = "Español" }
 
 local T = {
     ru = {
-        title = "HFTV Multi-Cheat v6.1", sub = "собрано по дампу игры",
+        title = "HFTV Multi-Cheat v6.1", sub = "carundev",
         tabVisuals = "Визуал", tabMove = "Движение", tabCombat = "Бой", tabFarm = "Фарм", tabMisc = "Разное", tabSettings = "Настройки",
         espPlayers = "ESP игроков", espBox = "Подсветка", espNames = "Ники и состояния",
         espHP = "Показывать HP", espDist = "Показывать дистанцию", tracers = "Трейсеры",
