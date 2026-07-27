@@ -110,7 +110,7 @@ local LANG_LABEL = { ru = "Русский", en = "English", es = "Español" }
 
 local T = {
     ru = {
-        title = "HFTV Multi-Cheat v6.1", sub = "carundev",
+        title = "HFTV Multi-Cheat v6.2", sub = "carunodev",
         tabVisuals = "Визуал", tabMove = "Движение", tabCombat = "Бой", tabFarm = "Фарм", tabMisc = "Разное", tabSettings = "Настройки",
         espPlayers = "ESP игроков", espBox = "Подсветка", espNames = "Ники и состояния",
         espHP = "Показывать HP", espDist = "Показывать дистанцию", tracers = "Трейсеры",
@@ -138,7 +138,7 @@ local T = {
         villain = "ЗЛОДЕЙ", crate = "ЯЩИК", tempv = "TEMP V", medkit = "АПТЕЧКА", prompt = "ИНТЕРАКТИВ",
     },
     en = {
-        title = "HFTV Multi-Cheat v6.1", sub = "built from the game dump",
+        title = "HFTV Multi-Cheat v6.2", sub = "carunodev",
         tabVisuals = "Visuals", tabMove = "Movement", tabCombat = "Combat", tabFarm = "Farm", tabMisc = "Misc", tabSettings = "Settings",
         espPlayers = "Player ESP", espBox = "Highlight", espNames = "Names and states",
         espHP = "Show HP", espDist = "Show distance", tracers = "Tracers",
@@ -166,7 +166,7 @@ local T = {
         villain = "VILLAIN", crate = "CRATE", tempv = "TEMP V", medkit = "MEDKIT", prompt = "PROMPT",
     },
     es = {
-        title = "HFTV Multi-Cheat v6.1", sub = "creado desde el volcado del juego",
+        title = "HFTV Multi-Cheat v6.2", sub = "carunodev",
         tabVisuals = "Visuales", tabMove = "Movimiento", tabCombat = "Combate", tabFarm = "Farmeo", tabMisc = "Varios", tabSettings = "Ajustes",
         espPlayers = "ESP de jugadores", espBox = "Resaltado", espNames = "Nombres y estados",
         espHP = "Mostrar vida", espDist = "Mostrar distancia", tracers = "Trazadores",
