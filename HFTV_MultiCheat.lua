@@ -9,16 +9,55 @@ local CoreGui = game:GetService("CoreGui")
 local LocalPlayer = Players.LocalPlayer
 local function cam() return Workspace.CurrentCamera end
 
+local DEBUG = true
+local reported = {}
+local function report(tag, err)
+    local key = tag .. tostring(err)
+    if reported[key] then return end
+    reported[key] = true
+    warn("[HFTV] " .. tag .. " -> " .. tostring(err))
+end
+local function safe(tag, fn, ...)
+    local ok, err = pcall(fn, ...)
+    if not ok and DEBUG then report(tag, err) end
+    return ok
+end
+
+local ENV = (type(getgenv) == "function" and getgenv()) or _G
+local function G(name)
+    local v = ENV[name]
+    if type(v) == "function" then return v end
+    v = rawget(_G, name)
+    if type(v) == "function" then return v end
+    return nil
+end
+
+local firePromptFn = G("fireproximityprompt")
+local function firePrompt(p)
+    if firePromptFn then
+        local ok = pcall(firePromptFn, p)
+        if ok then return true end
+        firePromptFn = nil
+    end
+    return pcall(function()
+        local hold = p.HoldDuration
+        p.HoldDuration = 0
+        p:InputHoldBegin()
+        p:InputHoldEnd()
+        p.HoldDuration = hold
+    end)
+end
+
 local Package = ReplicatedStorage:WaitForChild("ReplicatedStoragePackageLink", 20)
 local Remotes = Package and Package:WaitForChild("Remotes", 20)
 local Shared = Package and Package:WaitForChild("Shared", 20)
-if not Remotes then warn("[HFTV] wrong game") return end
+if not Remotes then warn("[HFTV] wrong game or remotes missing") return end
 
 local function req(n)
     local m = Shared and Shared:FindFirstChild(n)
     if not m then return nil end
     local ok, r = pcall(require, m)
-    return ok and r or nil
+    return ok and type(r) == "table" and r or nil
 end
 
 local GameConfig = req("GameConfig") or {}
@@ -30,20 +69,24 @@ local VILLAIN_HP = GameConfig.VillainHealth or 450
 local ULTRA_JUMP_VEL = MovementConfig.UltraJumpVelocity or 115
 local WALK_SPEED = MovementConfig.WalkSpeed or 16
 local RUN_SPEED = MovementConfig.RunSpeed or 34
-local TASK_MIN = TaskConfig.MinDuration or 2
 
 local function R(n) return Remotes:FindFirstChild(n) end
 local function fire(n, ...)
     local r = R(n)
-    if r and r:IsA("RemoteEvent") then
-        local a = table.pack(...)
-        return (pcall(function() r:FireServer(table.unpack(a, 1, a.n)) end))
-    end
-    return false
+    if not (r and r:IsA("RemoteEvent")) then return false end
+    local a = table.pack(...)
+    local ok, err = pcall(function() r:FireServer(table.unpack(a, 1, a.n)) end)
+    if not ok then report("fire:" .. n, err) end
+    return ok
 end
 local function onRemote(n, cb)
     local r = R(n)
-    if r and r:IsA("RemoteEvent") then return r.OnClientEvent:Connect(cb) end
+    if r and r:IsA("RemoteEvent") then
+        return r.OnClientEvent:Connect(function(...)
+            local a = table.pack(...)
+            safe("onRemote:" .. n, function() cb(table.unpack(a, 1, a.n)) end)
+        end)
+    end
 end
 
 local S = {
@@ -55,7 +98,7 @@ local S = {
     autoTask = false, taskDelay = 0, autoPrompt = false, promptCooldown = 0.4,
     autoHeal = false, healThreshold = 60, healCooldown = 3,
     aimbot = false, aimFov = 140, aimPart = "Head", autoPunch = false, punchRate = 0.35,
-    phoneSpam = false, hudVisible = true, espRate = 0.1,
+    phoneSpam = false, hudVisible = true, espRate = 0.1, debugLog = true,
 }
 
 local Round = { state = "?", endsAt = 0, chance = nil, myRole = "?" }
@@ -67,7 +110,7 @@ local LANG_LABEL = { ru = "\u0420\u0443\u0441\u0441\u043a\u0438\u0439", en = "En
 
 local T = {
     ru = {
-        title = "HFTV Multi-Cheat v5", sub = "\u0441\u043e\u0431\u0440\u0430\u043d\u043e \u043f\u043e \u0434\u0430\u043c\u043f\u0443 \u0438\u0433\u0440\u044b",
+        title = "HFTV Multi-Cheat v6", sub = "\u0441\u043e\u0431\u0440\u0430\u043d\u043e \u043f\u043e \u0434\u0430\u043c\u043f\u0443 \u0438\u0433\u0440\u044b",
         tabVisuals = "\u0412\u0438\u0437\u0443\u0430\u043b", tabMove = "\u0414\u0432\u0438\u0436\u0435\u043d\u0438\u0435", tabCombat = "\u0411\u043e\u0439", tabFarm = "\u0424\u0430\u0440\u043c", tabMisc = "\u0420\u0430\u0437\u043d\u043e\u0435", tabSettings = "\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438",
         espPlayers = "ESP \u0438\u0433\u0440\u043e\u043a\u043e\u0432", espBox = "\u041f\u043e\u0434\u0441\u0432\u0435\u0442\u043a\u0430", espNames = "\u041d\u0438\u043a\u0438 \u0438 \u0441\u043e\u0441\u0442\u043e\u044f\u043d\u0438\u044f",
         espHP = "\u041f\u043e\u043a\u0430\u0437\u044b\u0432\u0430\u0442\u044c HP", espDist = "\u041f\u043e\u043a\u0430\u0437\u044b\u0432\u0430\u0442\u044c \u0434\u0438\u0441\u0442\u0430\u043d\u0446\u0438\u044e", tracers = "\u0422\u0440\u0435\u0439\u0441\u0435\u0440\u044b",
@@ -88,13 +131,14 @@ local T = {
         forceVillain = "\u0421\u0442\u0430\u0442\u044c \u0437\u043b\u043e\u0434\u0435\u0435\u043c (\u0431\u0435\u0441\u043f\u043b\u0430\u0442\u043d\u043e)", reqRound = "\u0417\u0430\u043f\u0440\u043e\u0441\u0438\u0442\u044c \u0441\u043e\u0441\u0442\u043e\u044f\u043d\u0438\u0435 \u0440\u0430\u0443\u043d\u0434\u0430",
         phoneSpam = "\u0422\u0435\u043b\u0435\u0444\u043e\u043d: \u0441\u043f\u0430\u043c \u0437\u0430\u043f\u0438\u0441\u0438 \u043f\u043e \u0446\u0435\u043b\u0438", phoneStop = "\u0422\u0435\u043b\u0435\u0444\u043e\u043d: \u0441\u0442\u043e\u043f", hud = "\u041f\u043e\u043a\u0430\u0437\u044b\u0432\u0430\u0442\u044c HUD",
         language = "\u042f\u0437\u044b\u043a", espRate = "\u0418\u043d\u0442\u0435\u0440\u0432\u0430\u043b \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u044f ESP, \u0441\u0435\u043a", unloadBtn = "\u0412\u044b\u0433\u0440\u0443\u0437\u0438\u0442\u044c \u0441\u043a\u0440\u0438\u043f\u0442",
+        debugLog = "\u041b\u043e\u0433 \u043e\u0448\u0438\u0431\u043e\u043a \u0432 \u043a\u043e\u043d\u0441\u043e\u043b\u044c", selfTest = "\u0414\u0438\u0430\u0433\u043d\u043e\u0441\u0442\u0438\u043a\u0430 \u0441\u043a\u0440\u0438\u043f\u0442\u0430",
         loaded = "\u0421\u043a\u0440\u0438\u043f\u0442 \u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043d", langChanged = "\u042f\u0437\u044b\u043a \u0438\u0437\u043c\u0435\u043d\u0451\u043d", notFound = "\u041d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u043e", unavailable = "\u041d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u043d\u043e",
         sent = "\u041e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u043e", taskDone = "\u0417\u0430\u0434\u0430\u043d\u0438\u0435 \u0432\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u043e", taskFail = "\u0417\u0430\u0434\u0430\u043d\u0438\u0435 \u043f\u0440\u043e\u0432\u0430\u043b\u0435\u043d\u043e",
         hudState = "\u0421\u0422\u0410\u0422\u0423\u0421", hudTime = "\u0412\u0420\u0415\u041c\u042f", hudRole = "\u0420\u041e\u041b\u042c", hudChance = "\u0428\u0410\u041d\u0421", hudFilmed = "\u0422\u0415\u0411\u042f \u0421\u041d\u0418\u041c\u0410\u042e\u0422", hudHearing = "\u0421\u0423\u041f\u0415\u0420\u0421\u041b\u0423\u0425",
         villain = "\u0417\u041b\u041e\u0414\u0415\u0419", crate = "\u042f\u0429\u0418\u041a", tempv = "TEMP V", medkit = "\u0410\u041f\u0422\u0415\u0427\u041a\u0410", prompt = "\u0418\u041d\u0422\u0415\u0420\u0410\u041a\u0422\u0418\u0412",
     },
     en = {
-        title = "HFTV Multi-Cheat v5", sub = "built from the game dump",
+        title = "HFTV Multi-Cheat v6", sub = "built from the game dump",
         tabVisuals = "Visuals", tabMove = "Movement", tabCombat = "Combat", tabFarm = "Farm", tabMisc = "Misc", tabSettings = "Settings",
         espPlayers = "Player ESP", espBox = "Highlight", espNames = "Names and states",
         espHP = "Show HP", espDist = "Show distance", tracers = "Tracers",
@@ -115,13 +159,14 @@ local T = {
         forceVillain = "Force villain (free)", reqRound = "Request round state",
         phoneSpam = "Phone: spam recording at target", phoneStop = "Phone: stop", hud = "Show HUD",
         language = "Language", espRate = "ESP refresh interval, sec", unloadBtn = "Unload script",
+        debugLog = "Log errors to console", selfTest = "Run self-test",
         loaded = "Script loaded", langChanged = "Language changed", notFound = "Not found", unavailable = "Unavailable",
         sent = "Sent", taskDone = "Task complete", taskFail = "Task failed",
         hudState = "STATE", hudTime = "TIME", hudRole = "ROLE", hudChance = "CHANCE", hudFilmed = "YOU ARE BEING FILMED", hudHearing = "SUPER HEARING",
         villain = "VILLAIN", crate = "CRATE", tempv = "TEMP V", medkit = "MEDKIT", prompt = "PROMPT",
     },
     es = {
-        title = "HFTV Multi-Cheat v5", sub = "creado desde el volcado del juego",
+        title = "HFTV Multi-Cheat v6", sub = "creado desde el volcado del juego",
         tabVisuals = "Visuales", tabMove = "Movimiento", tabCombat = "Combate", tabFarm = "Farmeo", tabMisc = "Varios", tabSettings = "Ajustes",
         espPlayers = "ESP de jugadores", espBox = "Resaltado", espNames = "Nombres y estados",
         espHP = "Mostrar vida", espDist = "Mostrar distancia", tracers = "Trazadores",
@@ -142,6 +187,7 @@ local T = {
         forceVillain = "Forzar villano (gratis)", reqRound = "Solicitar estado de la ronda",
         phoneSpam = "Tel\u00e9fono: spam de grabaci\u00f3n al objetivo", phoneStop = "Tel\u00e9fono: detener", hud = "Mostrar HUD",
         language = "Idioma", espRate = "Intervalo de refresco del ESP, seg", unloadBtn = "Descargar script",
+        debugLog = "Registrar errores en la consola", selfTest = "Ejecutar autodiagn\u00f3stico",
         loaded = "Script cargado", langChanged = "Idioma cambiado", notFound = "No encontrado", unavailable = "No disponible",
         sent = "Enviado", taskDone = "Tarea completada", taskFail = "Tarea fallida",
         hudState = "ESTADO", hudTime = "TIEMPO", hudRole = "ROL", hudChance = "PROBABILIDAD", hudFilmed = "TE EST\u00c1N GRABANDO", hudHearing = "S\u00daPER O\u00cdDO",
@@ -229,7 +275,12 @@ end
 
 Players.PlayerRemoving:Connect(function(p)
     local e = entries[p]
-    if e then e.hl:Destroy() e.bb:Destroy() e.line:Destroy() entries[p] = nil end
+    if e then
+        e.hl:Destroy()
+        e.bb:Destroy()
+        e.line:Destroy()
+        entries[p] = nil
+    end
 end)
 
 local STATE_ATTRS = { "AbilityActive", "Stunned", "Grabbed", "Ragdolled", "Slammed", "Rooted", "Cloaked", "Shrunk", "Hyperarmor" }
@@ -239,7 +290,10 @@ local function updateESP()
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer then
             local e = entries[plr]
-            if not e then e = makeEntry() entries[plr] = e end
+            if not e then
+                e = makeEntry()
+                entries[plr] = e
+            end
             local ch = plr.Character
             local hrpPart = ch and ch:FindFirstChild("HumanoidRootPart")
             local hum = ch and ch:FindFirstChildOfClass("Humanoid")
@@ -292,6 +346,7 @@ local tags = {}
 local tracked = { loot = {}, crate = {}, prompt = {} }
 
 local function partOf(inst)
+    if not inst then return nil end
     if inst:IsA("BasePart") then return inst end
     if inst:IsA("Model") then
         return inst.PrimaryPart or inst:FindFirstChild("Center") or inst:FindFirstChildWhichIsA("BasePart")
@@ -327,7 +382,10 @@ end
 
 local function untag(inst)
     local t = tags[inst]
-    if t then t.gui:Destroy() tags[inst] = nil end
+    if t then
+        t.gui:Destroy()
+        tags[inst] = nil
+    end
 end
 
 local function isCrate(inst)
@@ -336,7 +394,7 @@ local function isCrate(inst)
     local ok, has = pcall(function() return CollectionService:HasTag(inst, "Crate") end)
     if ok and has then return true end
     local p = inst:FindFirstChildWhichIsA("ProximityPrompt", true)
-    if p and p.ObjectText:upper() == "CRATE" then return true end
+    if p and typeof(p.ObjectText) == "string" and p.ObjectText:upper() == "CRATE" then return true end
     return false
 end
 
@@ -359,10 +417,16 @@ local function classify(d)
     end
 end
 
-task.spawn(function()
-    for _, d in ipairs(Workspace:GetDescendants()) do pcall(classify, d) end
+local function fullScan()
+    for _, d in ipairs(Workspace:GetDescendants()) do
+        safe("classify", classify, d)
+    end
+end
+
+task.spawn(fullScan)
+Workspace.DescendantAdded:Connect(function(d)
+    task.defer(function() safe("classify", classify, d) end)
 end)
-Workspace.DescendantAdded:Connect(function(d) task.defer(function() pcall(classify, d) end) end)
 Workspace.DescendantRemoving:Connect(function(d)
     untag(d)
     tracked.loot[d] = nil
@@ -405,14 +469,19 @@ local function updateHUD()
 end
 
 local function char() return LocalPlayer.Character end
-local function hum() local c = char() return c and c:FindFirstChildOfClass("Humanoid") end
-local function hrp() local c = char() return c and c:FindFirstChild("HumanoidRootPart") end
+local function hum()
+    local c = char()
+    return c and c:FindFirstChildOfClass("Humanoid")
+end
+local function hrp()
+    local c = char()
+    return c and c:FindFirstChild("HumanoidRootPart")
+end
 
 UserInputService.JumpRequest:Connect(function()
-    if S.infJump then
-        local h = hum()
-        if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
-    end
+    if not S.infJump then return end
+    local h = hum()
+    if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
 end)
 
 local lastUltra = 0
@@ -570,7 +639,8 @@ for _, n in ipairs(dodgeRemotes) do
     end)
 end
 
-local notify
+local notify = function() end
+
 onRemote("TaskStart", function(token)
     if not S.autoTask or not token then return end
     if S.taskDelay <= 0 then
@@ -580,10 +650,9 @@ onRemote("TaskStart", function(token)
     end
 end)
 onRemote("TaskResult", function(ok, rew)
-    if S.autoTask and notify then
-        local extra = (rew and rew.Money) and (" +" .. rew.Money .. " V") or ""
-        notify(ok and (L("taskDone") .. extra) or L("taskFail"))
-    end
+    if not S.autoTask then return end
+    local extra = (type(rew) == "table" and rew.Money) and (" +" .. tostring(rew.Money) .. " V") or ""
+    notify(ok and (L("taskDone") .. extra) or L("taskFail"))
 end)
 
 local promptCd = {}
@@ -598,7 +667,7 @@ local function autoPromptStep()
         local base = partOf(host)
         if base and (base.Position - root.Position).Magnitude <= math.max(p.MaxActivationDistance, 12) then
             promptCd[p] = now + S.promptCooldown
-            pcall(function() fireproximityprompt(p) end)
+            firePrompt(p)
         end
     end
     for p in pairs(tracked.prompt) do tryPrompt(p, p.Parent) end
@@ -643,16 +712,74 @@ local function playerNames()
     return t
 end
 
-local okUI, Rayfield = pcall(function() return loadstring(game:HttpGet("https://sirius.menu/rayfield"))() end)
-if not okUI or not Rayfield then warn("[HFTV] Rayfield failed to load") return end
+local function loadRayfield()
+    if type(loadstring) ~= "function" then
+        warn("[HFTV] loadstring unavailable in this executor")
+        return nil
+    end
+    local okGet, src = pcall(function() return game:HttpGet("https://sirius.menu/rayfield") end)
+    if not okGet or type(src) ~= "string" or #src < 1000 then
+        warn("[HFTV] failed to download Rayfield")
+        return nil
+    end
+    local chunk, cerr = loadstring(src)
+    if not chunk then
+        warn("[HFTV] Rayfield compile error: " .. tostring(cerr))
+        return nil
+    end
+    local okRun, lib = pcall(chunk)
+    if not okRun or type(lib) ~= "table" then
+        warn("[HFTV] Rayfield init error: " .. tostring(lib))
+        return nil
+    end
+    return lib
+end
+
+local Rayfield = loadRayfield()
+if not Rayfield then return end
 
 notify = function(msg)
-    pcall(function() Rayfield:Notify({ Title = "HFTV", Content = msg or "", Duration = 3 }) end)
+    if type(Rayfield.Notify) ~= "function" then return end
+    safe("notify", function()
+        Rayfield:Notify({ Title = "HFTV", Content = tostring(msg or ""), Duration = 3 })
+    end)
+end
+
+local function destroyUI()
+    if type(Rayfield.Destroy) == "function" then
+        safe("Rayfield:Destroy", function() Rayfield:Destroy() end)
+    end
 end
 
 local running = true
 local selectedSkill = skillKeys[1]
 local buildUI
+
+local function selfTest()
+    local lines = {
+        "loadstring: " .. type(loadstring),
+        "fireproximityprompt: " .. (G("fireproximityprompt") and "ok" or "MISSING (fallback in use)"),
+        "Rayfield.Notify: " .. type(Rayfield.Notify),
+        "Rayfield.Destroy: " .. type(Rayfield.Destroy),
+        "remotes: SuperPunch=" .. tostring(R("SuperPunch") ~= nil)
+            .. " HealChannel=" .. tostring(R("HealChannel") ~= nil)
+            .. " TaskComplete=" .. tostring(R("TaskComplete") ~= nil)
+            .. " ForceVillainFree=" .. tostring(R("ForceVillainFree") ~= nil)
+            .. " ActivateSkill=" .. tostring(R("ActivateSkill") ~= nil)
+            .. " PhoneRecord=" .. tostring(R("PhoneRecord") ~= nil),
+        "dodge remotes: " .. #dodgeRemotes,
+        "skill keys: " .. #skillKeys,
+    }
+    local nc, nl, np = 0, 0, 0
+    for _ in pairs(tracked.crate) do nc = nc + 1 end
+    for _ in pairs(tracked.loot) do nl = nl + 1 end
+    for _ in pairs(tracked.prompt) do np = np + 1 end
+    table.insert(lines, ("tracked: crates=%d loot=%d prompts=%d"):format(nc, nl, np))
+    warn("[HFTV] ---- self test ----")
+    for _, l in ipairs(lines) do warn("[HFTV] " .. l) end
+    warn("[HFTV] -------------------")
+    notify("self-test -> console (F9)")
+end
 
 buildUI = function()
     local Window = Rayfield:CreateWindow({
@@ -676,13 +803,22 @@ buildUI = function()
     TabVis:CreateToggle({ Name = L("espHP"), CurrentValue = S.espHP, Callback = function(v) S.espHP = v end })
     TabVis:CreateToggle({ Name = L("espDist"), CurrentValue = S.espDist, Callback = function(v) S.espDist = v end })
     TabVis:CreateToggle({ Name = L("tracers"), CurrentValue = S.tracers, Callback = function(v) S.tracers = v end })
-    TabVis:CreateToggle({ Name = L("espCrates"), CurrentValue = S.espCrates, Callback = function(v) S.espCrates = v refreshWorldESP() end })
-    TabVis:CreateToggle({ Name = L("espLoot"), CurrentValue = S.espLoot, Callback = function(v) S.espLoot = v refreshWorldESP() end })
-    TabVis:CreateToggle({ Name = L("espPrompts"), CurrentValue = S.espPrompts, Callback = function(v) S.espPrompts = v refreshWorldESP() end })
+    TabVis:CreateToggle({ Name = L("espCrates"), CurrentValue = S.espCrates, Callback = function(v)
+        S.espCrates = v
+        safe("refreshWorldESP", refreshWorldESP)
+    end })
+    TabVis:CreateToggle({ Name = L("espLoot"), CurrentValue = S.espLoot, Callback = function(v)
+        S.espLoot = v
+        safe("refreshWorldESP", refreshWorldESP)
+    end })
+    TabVis:CreateToggle({ Name = L("espPrompts"), CurrentValue = S.espPrompts, Callback = function(v)
+        S.espPrompts = v
+        safe("refreshWorldESP", refreshWorldESP)
+    end })
     TabVis:CreateSlider({ Name = L("espMaxDist"), Range = { 50, 2000 }, Increment = 50, CurrentValue = S.espMaxDist, Callback = function(v) S.espMaxDist = v end })
     TabVis:CreateButton({ Name = L("rescan"), Callback = function()
-        for _, d in ipairs(Workspace:GetDescendants()) do pcall(classify, d) end
-        refreshWorldESP()
+        fullScan()
+        safe("refreshWorldESP", refreshWorldESP)
         local n = 0
         for _ in pairs(tracked.crate) do n = n + 1 end
         notify(L("cratesFound") .. n)
@@ -690,7 +826,7 @@ buildUI = function()
 
     TabMove:CreateToggle({ Name = L("infJump"), CurrentValue = S.infJump, Callback = function(v) S.infJump = v end })
     TabMove:CreateToggle({ Name = L("ultraSpam"), CurrentValue = S.ultraJumpSpam, Callback = function(v) S.ultraJumpSpam = v end })
-    TabMove:CreateButton({ Name = L("ultraOnce"), Callback = ultraJump })
+    TabMove:CreateButton({ Name = L("ultraOnce"), Callback = function() safe("ultraJump", ultraJump) end })
     TabMove:CreateSlider({ Name = L("ultraDelay"), Range = { 0, 1 }, Increment = 0.05, CurrentValue = S.ultraDelay, Callback = function(v) S.ultraDelay = v end })
     TabMove:CreateToggle({ Name = L("speedOn"), CurrentValue = S.speedOn, Callback = function(v)
         S.speedOn = v
@@ -700,7 +836,10 @@ buildUI = function()
         end
     end })
     TabMove:CreateSlider({ Name = L("speedValue"), Range = { 16, 400 }, Increment = 2, CurrentValue = S.speedValue, Callback = function(v) S.speedValue = v end })
-    TabMove:CreateToggle({ Name = L("antiRagdoll"), CurrentValue = S.antiRagdoll, Callback = function(v) S.antiRagdoll = v applyStateLocks(v) end })
+    TabMove:CreateToggle({ Name = L("antiRagdoll"), CurrentValue = S.antiRagdoll, Callback = function(v)
+        S.antiRagdoll = v
+        applyStateLocks(v)
+    end })
     TabMove:CreateToggle({ Name = L("antiSlow"), CurrentValue = S.antiSlow, Callback = function(v) S.antiSlow = v end })
     TabMove:CreateButton({ Name = L("tpCrate"), Callback = function()
         local p = nearestFrom(tracked.crate)
@@ -723,7 +862,11 @@ buildUI = function()
     local tpDrop = TabMove:CreateDropdown({ Name = L("player"), Options = playerNames(), CurrentOption = {}, MultipleOptions = false,
         Callback = function(o) tpTargetName = (typeof(o) == "table" and o[1]) or o end })
     TabMove:CreateButton({ Name = L("refresh"), Callback = function()
-        pcall(function() tpDrop:Refresh(playerNames()) end)
+        if tpDrop and type(tpDrop.Refresh) == "function" then
+            safe("dropdown:Refresh", function() tpDrop:Refresh(playerNames()) end)
+        else
+            notify(L("unavailable"))
+        end
     end })
     TabMove:CreateButton({ Name = L("tpPlayer"), Callback = function()
         local p = tpTargetName and Players:FindFirstChild(tpTargetName)
@@ -753,7 +896,9 @@ buildUI = function()
         end })
     end
     TabComb:CreateInput({ Name = L("skillManual"), PlaceholderText = "skill key", RemoveTextAfterFocusLost = false,
-        Callback = function(t) if t and t ~= "" then activateSkill(t, "tap") end end })
+        Callback = function(t)
+            if type(t) == "string" and t ~= "" then activateSkill(t, "tap") end
+        end })
 
     TabFarm:CreateToggle({ Name = L("autoTask"), CurrentValue = S.autoTask, Callback = function(v) S.autoTask = v end })
     TabFarm:CreateSlider({ Name = L("taskDelay"), Range = { 0, 5 }, Increment = 0.25, CurrentValue = S.taskDelay, Callback = function(v) S.taskDelay = v end })
@@ -765,7 +910,7 @@ buildUI = function()
     TabFarm:CreateButton({ Name = L("healSelf"), Callback = function()
         if not healSelf() then notify(L("unavailable")) end
     end })
-    TabFarm:CreateButton({ Name = L("healStop"), Callback = healStop })
+    TabFarm:CreateButton({ Name = L("healStop"), Callback = function() healStop() end })
 
     TabMisc:CreateButton({ Name = L("forceVillain"), Callback = function()
         notify(forceVillainFree() and L("sent") or L("unavailable"))
@@ -793,52 +938,67 @@ buildUI = function()
             if newLang == S.lang then return end
             S.lang = newLang
             task.defer(function()
-                pcall(function() Rayfield:Destroy() end)
+                destroyUI()
                 task.wait(0.15)
-                local ok2, rf = pcall(function() return loadstring(game:HttpGet("https://sirius.menu/rayfield"))() end)
-                if ok2 and rf then Rayfield = rf end
+                local fresh = loadRayfield()
+                if fresh then Rayfield = fresh end
+                notify = function(msg)
+                    if type(Rayfield.Notify) ~= "function" then return end
+                    safe("notify", function()
+                        Rayfield:Notify({ Title = "HFTV", Content = tostring(msg or ""), Duration = 3 })
+                    end)
+                end
                 for inst in pairs(tags) do untag(inst) end
-                buildUI()
-                refreshWorldESP()
+                safe("buildUI", buildUI)
+                safe("refreshWorldESP", refreshWorldESP)
                 notify(L("langChanged"))
             end)
         end })
     TabSet:CreateSlider({ Name = L("espRate"), Range = { 0.05, 1 }, Increment = 0.05, CurrentValue = S.espRate, Callback = function(v) S.espRate = v end })
+    TabSet:CreateToggle({ Name = L("debugLog"), CurrentValue = S.debugLog, Callback = function(v)
+        S.debugLog = v
+        DEBUG = v
+    end })
+    TabSet:CreateButton({ Name = L("selfTest"), Callback = function() safe("selfTest", selfTest) end })
     TabSet:CreateButton({ Name = L("unloadBtn"), Callback = function()
         running = false
         for _, e in pairs(entries) do
-            pcall(function() e.hl:Destroy() e.bb:Destroy() e.line:Destroy() end)
+            pcall(function()
+                e.hl:Destroy()
+                e.bb:Destroy()
+                e.line:Destroy()
+            end)
         end
         for inst in pairs(tags) do untag(inst) end
         pcall(function() adornFolder:Destroy() end)
         pcall(function() gui:Destroy() end)
-        pcall(function() Rayfield:Destroy() end)
+        destroyUI()
     end })
 end
 
-buildUI()
+safe("buildUI", buildUI)
 
 task.spawn(function()
     while running do
-        pcall(updateESP)
-        pcall(updateHUD)
+        safe("updateESP", updateESP)
+        safe("updateHUD", updateHUD)
         task.wait(S.espRate)
     end
 end)
 
 task.spawn(function()
     while running do
-        pcall(refreshWorldESP)
+        safe("refreshWorldESP", refreshWorldESP)
         task.wait(1)
     end
 end)
 
 task.spawn(function()
     while running do
-        pcall(autoPromptStep)
-        pcall(autoHealStep)
+        safe("autoPromptStep", autoPromptStep)
+        safe("autoHealStep", autoHealStep)
         if S.phoneSpam then
-            pcall(phoneRecordAt, tpTargetName and Players:FindFirstChild(tpTargetName))
+            safe("phoneRecord", phoneRecordAt, tpTargetName and Players:FindFirstChild(tpTargetName))
         end
         task.wait(0.25)
     end
@@ -846,18 +1006,18 @@ end)
 
 task.spawn(function()
     while running do
-        if S.autoPunch then pcall(superPunch) end
+        if S.autoPunch then safe("superPunch", superPunch) end
         task.wait(S.punchRate)
     end
 end)
 
 RunService.RenderStepped:Connect(function()
     if not running then return end
-    if S.antiRagdoll then pcall(antiRagdollStep) end
-    if S.antiSlow then pcall(antiSlowStep) end
-    pcall(speedStep)
-    pcall(aimbotStep)
-    if S.ultraJumpSpam and UserInputService:IsKeyDown(Enum.KeyCode.Space) then pcall(ultraJump) end
+    if S.antiRagdoll then safe("antiRagdollStep", antiRagdollStep) end
+    if S.antiSlow then safe("antiSlowStep", antiSlowStep) end
+    safe("speedStep", speedStep)
+    safe("aimbotStep", aimbotStep)
+    if S.ultraJumpSpam and UserInputService:IsKeyDown(Enum.KeyCode.Space) then safe("ultraJump", ultraJump) end
 end)
 
 LocalPlayer.CharacterAdded:Connect(function()
